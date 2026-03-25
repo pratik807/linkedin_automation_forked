@@ -19,6 +19,12 @@ export async function deleteOldArticles(): Promise<{ articlesDeleted: number; jo
     const cutoffDate = new Date();
     cutoffDate.setHours(cutoffDate.getHours() - ARTICLE_AGE_HOURS);
 
+    // Always delete old account issues (these are shown in the UI as "Recent issues")
+    const issuesResult = await AccountIssueModel.deleteMany({
+      createdAt: { $lt: cutoffDate },
+    });
+    const issuesDeleted = issuesResult.deletedCount || 0;
+
     // Find old articles to get their IDs
     const oldArticles = await ArticleModel.find(
       { createdAt: { $lt: cutoffDate } },
@@ -28,8 +34,11 @@ export async function deleteOldArticles(): Promise<{ articlesDeleted: number; jo
     const oldArticleIds = oldArticles.map((a: { articleId: string }) => a.articleId);
     
     if (oldArticleIds.length === 0) {
-      logger.info('No articles older than 48 hours found');
-      return { articlesDeleted: 0, jobsDeleted: 0, issuesDeleted: 0 };
+      logger.info(`No articles older than ${ARTICLE_AGE_HOURS} hours found`);
+      if (issuesDeleted > 0) {
+        console.log(`[Cleanup] Deleted ${issuesDeleted} account issues (> ${ARTICLE_AGE_HOURS}h old)`);
+      }
+      return { articlesDeleted: 0, jobsDeleted: 0, issuesDeleted };
     }
 
     // Delete publish jobs linked to old articles
@@ -38,20 +47,18 @@ export async function deleteOldArticles(): Promise<{ articlesDeleted: number; jo
     });
     const jobsDeleted = jobsResult.deletedCount || 0;
 
-    // Delete account issues linked to old articles
-    const issuesResult = await AccountIssueModel.deleteMany({
-      articleId: { $in: oldArticleIds }
-    });
-    const issuesDeleted = issuesResult.deletedCount || 0;
-
     // Delete the old articles
     const articlesResult = await ArticleModel.deleteMany({
       createdAt: { $lt: cutoffDate }
     });
     const articlesDeleted = articlesResult.deletedCount || 0;
     
-    logger.info(`Cleanup completed - deleted ${articlesDeleted} articles (>48h old), ${jobsDeleted} jobs, ${issuesDeleted} issues`);
-    console.log(`[Cleanup] Deleted ${articlesDeleted} articles (>48h old), ${jobsDeleted} linked jobs, ${issuesDeleted} linked issues`);
+    logger.info(
+      `Cleanup completed - deleted ${articlesDeleted} articles (> ${ARTICLE_AGE_HOURS}h old), ${jobsDeleted} jobs, ${issuesDeleted} account issues (> ${ARTICLE_AGE_HOURS}h old)`
+    );
+    console.log(
+      `[Cleanup] Deleted ${articlesDeleted} articles (> ${ARTICLE_AGE_HOURS}h old), ${jobsDeleted} linked jobs, ${issuesDeleted} account issues (> ${ARTICLE_AGE_HOURS}h old)`
+    );
 
     return { articlesDeleted, jobsDeleted, issuesDeleted };
   } catch (error) {
